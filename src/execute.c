@@ -33,10 +33,18 @@ int handle_builtin(char** arglist) {
         printf("help  - Display available commands\n");
         printf("jobs  - Display job control status\n");
 
+        printf("history - Display command history\n");
         return 1;
     }
 
-    // JOBS command
+
+   // HISTORY command
+if (strcmp(arglist[0], "history") == 0) {
+    display_history();
+    return 1;
+}
+
+ // JOBS command
     if (strcmp(arglist[0], "jobs") == 0) {
         printf("Job control not yet implemented.\n");
         return 1;
