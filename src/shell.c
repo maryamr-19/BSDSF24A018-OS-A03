@@ -1,5 +1,6 @@
- 
+
 #include "shell.h"
+
 // Available built-in commands
 static const char *commands[] = {
     "cd",
@@ -47,10 +48,9 @@ void setup_completion(void) {
     rl_attempted_completion_function = shell_completion;
 }
 
-
+// Read command using GNU Readline
 char* read_cmd(char* prompt) {
 
-    // Read command using GNU Readline
     char* cmdline = readline(prompt);
 
     // Handle Ctrl + D
@@ -58,60 +58,114 @@ char* read_cmd(char* prompt) {
         return NULL;
     }
 
-    // Return the command, even if it is empty
     return cmdline;
 }
+
+// Free partially allocated token list
+static void free_tokens(char** arglist, int count) {
+    for (int i = 0; i < count; i++) {
+        free(arglist[i]);
+    }
+
+    free(arglist);
+}
+
+// Tokenize command and recognize special operators
 char** tokenize(char* cmdline) {
-    // Edge case: empty command line
-    if (cmdline == NULL || cmdline[0] == '\0' || cmdline[0] == '\n') {
+
+    // Handle empty command
+    if (cmdline == NULL || cmdline[0] == '\0') {
         return NULL;
     }
 
-    char** arglist = (char**)malloc(sizeof(char*) * (MAXARGS + 1));
+    // Allocate space for 64 arguments plus NULL
+    char** arglist = malloc(sizeof(char*) * (MAXARGS + 1));
 
-    for (int i = 0; i < MAXARGS + 1; i++) {
-        arglist[i] = (char*)malloc(sizeof(char) * ARGLEN);
-        bzero(arglist[i], ARGLEN);
+    if (arglist == NULL) {
+        perror("malloc");
+        return NULL;
     }
 
-    char* cp = cmdline;
-    char* start;
-    int len;
     int argnum = 0;
+    int i = 0;
 
-    while (*cp != '\0' && argnum < MAXARGS) {
-        while (*cp == ' ' || *cp == '\t') cp++;
+    while (cmdline[i] != '\0') {
 
-        if (*cp == '\0') break;
-
-        start = cp;
-        len = 1;
-
-        while (*++cp != '\0' && !(*cp == ' ' || *cp == '\t')) {
-            len++;
+        // Skip spaces and tabs
+        if (cmdline[i] == ' ' || cmdline[i] == '\t') {
+            i++;
+            continue;
         }
 
-        strncpy(arglist[argnum], start, len);
+        // Check for maximum arguments
+        if (argnum >= MAXARGS) {
+            printf("Error: Too many arguments\n");
+            free_tokens(arglist, argnum);
+            return NULL;
+        }
+
+        // Recognize special symbols: >, <, |
+        if (cmdline[i] == '>' ||
+            cmdline[i] == '<' ||
+            cmdline[i] == '|') {
+
+            arglist[argnum] = malloc(2);
+
+            if (arglist[argnum] == NULL) {
+                perror("malloc");
+                free_tokens(arglist, argnum);
+                return NULL;
+            }
+
+            arglist[argnum][0] = cmdline[i];
+            arglist[argnum][1] = '\0';
+
+            argnum++;
+            i++;
+            continue;
+        }
+
+        // Read a normal word
+        int start = i;
+
+        while (cmdline[i] != '\0' &&
+               cmdline[i] != ' ' &&
+               cmdline[i] != '\t' &&
+               cmdline[i] != '>' &&
+               cmdline[i] != '<' &&
+               cmdline[i] != '|') {
+
+            i++;
+        }
+
+        int len = i - start;
+
+        arglist[argnum] = malloc(len + 1);
+
+        if (arglist[argnum] == NULL) {
+            perror("malloc");
+            free_tokens(arglist, argnum);
+            return NULL;
+        }
+
+        strncpy(arglist[argnum], cmdline + start, len);
         arglist[argnum][len] = '\0';
+
         argnum++;
     }
 
+    // Empty command
     if (argnum == 0) {
-        for (int i = 0; i < MAXARGS + 1; i++) {
-            free(arglist[i]);
-        }
-
         free(arglist);
         return NULL;
     }
 
+    // Mark end of arguments
     arglist[argnum] = NULL;
+
     return arglist;
 }
 
-
-
-// Display command history
 // Display command history
 void display_history(void) {
 
@@ -125,8 +179,10 @@ void display_history(void) {
         printf("%d  %s\n", history_base + i, entries[i]->line);
     }
 }
+
 // Retrieve a command using its history number
 char* get_history(int number) {
+
     HIST_ENTRY* entry = history_get(number);
 
     if (entry == NULL) {
@@ -135,3 +191,4 @@ char* get_history(int number) {
 
     return entry->line;
 }
+
