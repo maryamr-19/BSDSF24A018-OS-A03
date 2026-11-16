@@ -18,11 +18,25 @@
 // Function prototypes
 char* read_cmd(char* prompt);
 char** tokenize(char* cmdline);
-int execute(char** arglist);
+
+int execute(char** arglist, int background, const char* command);
+
 int handle_builtin(char** arglist);
 void display_history(void);
 char* get_history(int number);
 
 void setup_completion(void);
 
+// Background job management
+#define MAX_JOBS 100
+
+typedef struct {
+    pid_t pid;
+    char command[MAX_LEN];
+} BackgroundJob;
+
+void add_job(pid_t pid, const char* command);
+void remove_job(pid_t pid);
+void display_jobs(void);
+void reap_background_jobs(void);
 #endif // SHELL_H
