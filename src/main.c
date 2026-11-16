@@ -8,9 +8,17 @@ int main() {
     char* cmdline;
     char** arglist;
     int result;
+// Initialize GNU Readline history
+using_history();
 
-    while ((cmdline = read_cmd(PROMPT, stdin)) != NULL) {
+// Set maximum history size to 20 commands
 
+stifle_history(HISTORY_SIZE);
+// Enable Tab completion using GNU Readline
+// Enable custom shell Tab completion
+// Enable custom shell Tab completion
+setup_completion();
+while ((cmdline = read_cmd(PROMPT)) != NULL) {
         // STEP 1: Check whether the command is a history replay
         if (cmdline[0] == '!') {
 

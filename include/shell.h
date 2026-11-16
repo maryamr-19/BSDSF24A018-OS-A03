@@ -8,18 +8,21 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <errno.h>
-
+#include <readline/readline.h>
+#include <readline/history.h>
 #define MAX_LEN 512
 #define MAXARGS 10
 #define ARGLEN 30
 #define PROMPT "FCIT> "
 #define HISTORY_SIZE 20
 // Function prototypes
-char* read_cmd(char* prompt, FILE* fp);
+char* read_cmd(char* prompt);
 char** tokenize(char* cmdline);
 int execute(char** arglist);
 int handle_builtin(char** arglist);
-void add_history(const char* command);
 void display_history(void);
 char* get_history(int number);
+
+void setup_completion(void);
+
 #endif // SHELL_H

@@ -1,31 +1,66 @@
-
+ 
 #include "shell.h"
+// Available built-in commands
+static const char *commands[] = {
+    "cd",
+    "exit",
+    "help",
+    "history",
+    "jobs",
+    NULL
+};
 
-// History storage: array of 20 command strings
-static char* history[HISTORY_SIZE];
-static int history_count = 0;
+// Generate matching built-in commands
+static char *command_generator(const char *text, int state) {
+    static int index;
+    static size_t length;
 
-
-char* read_cmd(char* prompt, FILE* fp) {
-    printf("%s", prompt);
-    char* cmdline = (char*) malloc(sizeof(char) * MAX_LEN);
-    int c, pos = 0;
-
-    while ((c = getc(fp)) != EOF) {
-        if (c == '\n') break;
-        cmdline[pos++] = c;
+    if (state == 0) {
+        index = 0;
+        length = strlen(text);
     }
 
-    if (c == EOF && pos == 0) {
-        free(cmdline);
-        return NULL;
+    while (commands[index] != NULL) {
+        const char *name = commands[index++];
+
+        if (strncmp(name, text, length) == 0) {
+            return strdup(name);
+        }
     }
 
-    cmdline[pos] = '\0';
-    return cmdline;
+    return NULL;
+}
+
+// Decide whether to complete commands or filenames
+static char **shell_completion(const char *text, int start, int end) {
+    (void)end;
+
+    if (start == 0) {
+        return rl_completion_matches(text, command_generator);
+    }
+
+    return rl_completion_matches(text, rl_filename_completion_function);
+}
+
+// Enable custom Tab completion
+void setup_completion(void) {
+    rl_attempted_completion_function = shell_completion;
 }
 
 
+char* read_cmd(char* prompt) {
+
+    // Read command using GNU Readline
+    char* cmdline = readline(prompt);
+
+    // Handle Ctrl + D
+    if (cmdline == NULL) {
+        return NULL;
+    }
+
+    // Return the command, even if it is empty
+    return cmdline;
+}
 char** tokenize(char* cmdline) {
     // Edge case: empty command line
     if (cmdline == NULL || cmdline[0] == '\0' || cmdline[0] == '\n') {
@@ -75,46 +110,28 @@ char** tokenize(char* cmdline) {
 }
 
 
-// Add a command to history
-void add_history(const char* command) {
 
-    // If history is full, remove the oldest command
-    if (history_count == HISTORY_SIZE) {
-
-        free(history[0]);
-
-        // Shift remaining commands one position left
-        for (int i = 0; i < HISTORY_SIZE - 1; i++) {
-            history[i] = history[i + 1];
-        }
-
-        history_count--;
-    }
-
-    // Store a copy of the new command
-    history[history_count] = strdup(command);
-
-    if (history[history_count] != NULL) {
-        history_count++;
-    }
-}
-
-
-// Display all stored commands
+// Display command history
+// Display command history
 void display_history(void) {
 
-    for (int i = 0; i < history_count; i++) {
-        printf("%d  %s\n", i + 1, history[i]);
+    HIST_ENTRY** entries = history_list();
+
+    if (entries == NULL) {
+        return;
+    }
+
+    for (int i = 0; entries[i] != NULL; i++) {
+        printf("%d  %s\n", history_base + i, entries[i]->line);
     }
 }
-
-
 // Retrieve a command using its history number
 char* get_history(int number) {
+    HIST_ENTRY* entry = history_get(number);
 
-    if (number < 1 || number > history_count) {
+    if (entry == NULL) {
         return NULL;
     }
 
-    return history[number - 1];
+    return entry->line;
 }
