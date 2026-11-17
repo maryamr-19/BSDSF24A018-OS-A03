@@ -125,6 +125,21 @@ int handle_builtin(char** arglist) {
 }
 
 
+// Convert waitpid status into normal exit code
+static int get_exit_status(int status) {
+
+    if (WIFEXITED(status)) {
+        return WEXITSTATUS(status);
+    }
+
+    if (WIFSIGNALED(status)) {
+        return 128 + WTERMSIG(status);
+    }
+
+    return 1;
+}
+
+
 // Execute one command with optional input/output redirection
 static int execute_single(char** args, int input_fd, int output_fd,
                           int background, const char* command) {
@@ -133,12 +148,13 @@ static int execute_single(char** args, int input_fd, int output_fd,
 
     if (pid < 0) {
         perror("fork");
-        return -1;
+        return 1;
     }
 
     if (pid == 0) {
 
         if (input_fd != STDIN_FILENO) {
+
             if (dup2(input_fd, STDIN_FILENO) == -1) {
                 perror("dup2 input");
                 exit(1);
@@ -148,6 +164,7 @@ static int execute_single(char** args, int input_fd, int output_fd,
         }
 
         if (output_fd != STDOUT_FILENO) {
+
             if (dup2(output_fd, STDOUT_FILENO) == -1) {
                 perror("dup2 output");
                 exit(1);
@@ -164,13 +181,17 @@ static int execute_single(char** args, int input_fd, int output_fd,
 
     if (background) {
         add_job(pid, command);
-    }
-    else {
-        int status;
-        waitpid(pid, &status, 0);
+        return 0;
     }
 
-    return 0;
+    int status;
+
+    if (waitpid(pid, &status, 0) == -1) {
+        perror("waitpid");
+        return 1;
+    }
+
+    return get_exit_status(status);
 }
 
 
@@ -214,7 +235,7 @@ int execute(char* arglist[], int background, const char* command) {
 
             if (arg_count == 0 || command_count >= MAXARGS - 1) {
                 fprintf(stderr, "Syntax error near pipe\n");
-                return 0;
+                return 1;
             }
 
             commands[command_count][arg_count] = NULL;
@@ -227,7 +248,7 @@ int execute(char* arglist[], int background, const char* command) {
 
             if (arglist[i + 1] == NULL) {
                 fprintf(stderr, "Missing input filename\n");
-                return 0;
+                return 1;
             }
 
             input_file = arglist[++i];
@@ -237,7 +258,7 @@ int execute(char* arglist[], int background, const char* command) {
 
             if (arglist[i + 1] == NULL) {
                 fprintf(stderr, "Missing output filename\n");
-                return 0;
+                return 1;
             }
 
             output_file = arglist[++i];
@@ -247,7 +268,7 @@ int execute(char* arglist[], int background, const char* command) {
 
             if (arg_count >= MAXARGS - 1) {
                 fprintf(stderr, "Too many arguments\n");
-                return 0;
+                return 1;
             }
 
             commands[command_count][arg_count++] = arglist[i];
@@ -257,7 +278,7 @@ int execute(char* arglist[], int background, const char* command) {
 
     if (arg_count == 0) {
         fprintf(stderr, "Syntax error: missing command\n");
-        return 0;
+        return 1;
     }
 
     commands[command_count][arg_count] = NULL;
@@ -275,7 +296,7 @@ int execute(char* arglist[], int background, const char* command) {
 
         if (input_fd == -1) {
             perror(input_file);
-            return 0;
+            return 1;
         }
     }
 
@@ -295,17 +316,24 @@ int execute(char* arglist[], int background, const char* command) {
                 close(input_fd);
             }
 
-            return 0;
+            return 1;
         }
     }
+
+
+    int execution_status = 0;
 
 
     // Execute a single command
     if (command_count == 1) {
 
-        execute_single(commands[0], input_fd, output_fd,
-                       background, command);
-
+        execution_status = execute_single(
+            commands[0],
+            input_fd,
+            output_fd,
+            background,
+            command
+        );
     }
 
     else {
@@ -323,7 +351,16 @@ int execute(char* arglist[], int background, const char* command) {
 
                 if (pipe(pipe_fd) == -1) {
                     perror("pipe");
-                    return 0;
+
+                    if (previous_read != STDIN_FILENO) {
+                        close(previous_read);
+                    }
+
+                    if (output_fd != STDOUT_FILENO) {
+                        close(output_fd);
+                    }
+
+                    return 1;
                 }
             }
 
@@ -335,8 +372,23 @@ int execute(char* arglist[], int background, const char* command) {
 
             if (pid == -1) {
                 perror("fork");
-                return 0;
+
+                if (i < command_count - 1) {
+                    close(pipe_fd[0]);
+                    close(pipe_fd[1]);
+                }
+
+                if (previous_read != STDIN_FILENO) {
+                    close(previous_read);
+                }
+
+                if (output_fd != STDOUT_FILENO) {
+                    close(output_fd);
+                }
+
+                return 1;
             }
+
 
             if (pid == 0) {
 
@@ -371,10 +423,17 @@ int execute(char* arglist[], int background, const char* command) {
             pids[i] = pid;
 
 
+            // Close previous input in parent
             if (previous_read != STDIN_FILENO) {
                 close(previous_read);
+
+                if (previous_read == input_fd) {
+                    input_fd = STDIN_FILENO;
+                }
             }
 
+
+            // Prepare next pipeline input
             if (i < command_count - 1) {
                 close(pipe_fd[1]);
                 previous_read = pipe_fd[0];
@@ -386,12 +445,10 @@ int execute(char* arglist[], int background, const char* command) {
             close(previous_read);
         }
 
-        if (input_fd != STDIN_FILENO) {
-            close(input_fd);
-        }
 
         if (output_fd != STDOUT_FILENO) {
             close(output_fd);
+            output_fd = STDOUT_FILENO;
         }
 
 
@@ -406,15 +463,28 @@ int execute(char* arglist[], int background, const char* command) {
         // Foreground pipeline
         else {
 
+            int last_status = 0;
+
             for (int i = 0; i < command_count; i++) {
 
                 int status;
-                waitpid(pids[i], &status, 0);
-            }
-        }
 
+                if (waitpid(pids[i], &status, 0) == -1) {
+                    perror("waitpid");
+                    last_status = 1;
+                }
+
+                else if (i == command_count - 1) {
+                    last_status = get_exit_status(status);
+                }
+            }
+
+            execution_status = last_status;
+        }
     }
 
+
+    // Close remaining file descriptors
     if (input_fd != STDIN_FILENO) {
         close(input_fd);
     }
@@ -423,5 +493,5 @@ int execute(char* arglist[], int background, const char* command) {
         close(output_fd);
     }
 
-    return 0;
+    return execution_status;
 }
