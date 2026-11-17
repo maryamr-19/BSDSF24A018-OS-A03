@@ -71,14 +71,15 @@ static void free_tokens(char** arglist, int count) {
 }
 
 // Tokenize command and recognize special operators
+
+
+
 char** tokenize(char* cmdline) {
 
-    // Handle empty command
     if (cmdline == NULL || cmdline[0] == '\0') {
         return NULL;
     }
 
-    // Allocate space for 64 arguments plus NULL
     char** arglist = malloc(sizeof(char*) * (MAXARGS + 1));
 
     if (arglist == NULL) {
@@ -91,20 +92,22 @@ char** tokenize(char* cmdline) {
 
     while (cmdline[i] != '\0') {
 
-        // Skip spaces and tabs
-        if (cmdline[i] == ' ' || cmdline[i] == '\t') {
+        // Skip spaces and tabs outside quotes
+        while (cmdline[i] == ' ' || cmdline[i] == '\t') {
             i++;
-            continue;
         }
 
-        // Check for maximum arguments
+        if (cmdline[i] == '\0') {
+            break;
+        }
+
         if (argnum >= MAXARGS) {
             printf("Error: Too many arguments\n");
             free_tokens(arglist, argnum);
             return NULL;
         }
 
-        // Recognize special symbols: >, <, |
+        // Recognize shell operators
         if (cmdline[i] == '>' ||
             cmdline[i] == '<' ||
             cmdline[i] == '|') {
@@ -125,46 +128,74 @@ char** tokenize(char* cmdline) {
             continue;
         }
 
-        // Read a normal word
-        int start = i;
+        char token[MAX_LEN];
+        int j = 0;
+        char quote = '\0';
 
-        while (cmdline[i] != '\0' &&
-               cmdline[i] != ' ' &&
-               cmdline[i] != '\t' &&
-               cmdline[i] != '>' &&
-               cmdline[i] != '<' &&
-               cmdline[i] != '|') {
+        // Read one complete token
+        while (cmdline[i] != '\0') {
+
+            char current = cmdline[i];
+
+            // Start or end quoted text
+            if (current == '"' || current == '\'') {
+
+                if (quote == '\0') {
+                    quote = current;
+                    i++;
+                    continue;
+                }
+                else if (quote == current) {
+                    quote = '\0';
+                    i++;
+                    continue;
+                }
+            }
+
+            // Stop at whitespace or operators outside quotes
+            if (quote == '\0' &&
+                (current == ' ' || current == '\t' ||
+                 current == '>' || current == '<' ||
+                 current == '|')) {
+                break;
+            }
+
+            if (j < MAX_LEN - 1) {
+                token[j++] = current;
+            }
 
             i++;
         }
 
-        int len = i - start;
-
-        arglist[argnum] = malloc(len + 1);
-
-        if (arglist[argnum] == NULL) {
-            perror("malloc");
+        if (quote != '\0') {
+            printf("Error: Unclosed quotation mark\n");
             free_tokens(arglist, argnum);
             return NULL;
         }
 
-        strncpy(arglist[argnum], cmdline + start, len);
-        arglist[argnum][len] = '\0';
+        token[j] = '\0';
+
+        arglist[argnum] = strdup(token);
+
+        if (arglist[argnum] == NULL) {
+            perror("strdup");
+            free_tokens(arglist, argnum);
+            return NULL;
+        }
 
         argnum++;
     }
 
-    // Empty command
     if (argnum == 0) {
         free(arglist);
         return NULL;
     }
 
-    // Mark end of arguments
     arglist[argnum] = NULL;
 
     return arglist;
 }
+
 
 // Display command history
 void display_history(void) {

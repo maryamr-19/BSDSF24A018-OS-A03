@@ -1,13 +1,15 @@
 
 #include "shell.h"
 #include <fcntl.h>
+#include <ctype.h>
 
-// Array to store background jobs
+/* =========================================
+   BACKGROUND JOB MANAGEMENT
+   ========================================= */
+
 BackgroundJob jobs[MAX_JOBS];
 int job_count = 0;
 
-
-// Add a background process to the job list
 void add_job(pid_t pid, const char* command) {
 
     if (job_count >= MAX_JOBS) {
@@ -25,8 +27,6 @@ void add_job(pid_t pid, const char* command) {
     printf("[%d] Started: %s\n", pid, command);
 }
 
-
-// Remove a completed process from the job list
 void remove_job(pid_t pid) {
 
     for (int i = 0; i < job_count; i++) {
@@ -43,8 +43,6 @@ void remove_job(pid_t pid) {
     }
 }
 
-
-// Display currently running background jobs
 void display_jobs(void) {
 
     if (job_count == 0) {
@@ -55,14 +53,10 @@ void display_jobs(void) {
     printf("Background Jobs:\n");
 
     for (int i = 0; i < job_count; i++) {
-        printf("[%d] %s\n",
-               jobs[i].pid,
-               jobs[i].command);
+        printf("[%d] %s\n", jobs[i].pid, jobs[i].command);
     }
 }
 
-
-// Reap completed background processes
 void reap_background_jobs(void) {
 
     int status;
@@ -76,12 +70,241 @@ void reap_background_jobs(void) {
     }
 }
 
+/* =========================================
+   SHELL VARIABLES USING LINKED LIST
+   ========================================= */
 
-// Handle built-in commands
-// Returns 0 = not built-in
-// Returns 1 = built-in handled
-// Returns -1 = exit command
+typedef struct ShellVariable {
+    char* name;
+    char* value;
+    struct ShellVariable* next;
+} ShellVariable;
+
+static ShellVariable* variables = NULL;
+
+/* Find an existing variable */
+static ShellVariable* find_variable(const char* name) {
+
+    ShellVariable* current = variables;
+
+    while (current != NULL) {
+
+        if (strcmp(current->name, name) == 0) {
+            return current;
+        }
+
+        current = current->next;
+    }
+
+    return NULL;
+}
+
+/* Check whether a token is a valid assignment */
+int is_variable_assignment(const char* token) {
+
+    if (token == NULL) {
+        return 0;
+    }
+
+    const char* equal = strchr(token, '=');
+
+    if (equal == NULL || equal == token) {
+        return 0;
+    }
+
+    if (!(isalpha((unsigned char)token[0]) || token[0] == '_')) {
+        return 0;
+    }
+
+    for (const char* p = token; p < equal; p++) {
+
+        if (!(isalnum((unsigned char)*p) || *p == '_')) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+/* Create a new variable or update an existing one */
+int set_shell_variable(const char* name, const char* value) {
+
+    if (name == NULL || value == NULL) {
+        return 0;
+    }
+
+    ShellVariable* current = find_variable(name);
+
+    if (current != NULL) {
+
+        char* new_value = strdup(value);
+
+        if (new_value == NULL) {
+            perror("strdup");
+            return 0;
+        }
+
+        free(current->value);
+        current->value = new_value;
+
+        return 1;
+    }
+
+    ShellVariable* new_variable = malloc(sizeof(ShellVariable));
+
+    if (new_variable == NULL) {
+        perror("malloc");
+        return 0;
+    }
+
+    new_variable->name = strdup(name);
+    new_variable->value = strdup(value);
+
+    if (new_variable->name == NULL ||
+        new_variable->value == NULL) {
+
+        perror("strdup");
+
+        free(new_variable->name);
+        free(new_variable->value);
+        free(new_variable);
+
+        return 0;
+    }
+
+    new_variable->next = variables;
+    variables = new_variable;
+
+    return 1;
+}
+
+/* Display all stored variables */
+void print_shell_variables(void) {
+
+    ShellVariable* current = variables;
+
+    if (current == NULL) {
+        printf("No shell variables defined.\n");
+        return;
+    }
+
+    while (current != NULL) {
+
+        printf("%s=%s\n", current->name, current->value);
+
+        current = current->next;
+    }
+}
+
+/* Expand $VARNAME into its stored value */
+char* expand_shell_variables(const char* token) {
+
+    if (token == NULL) {
+        return NULL;
+    }
+
+    size_t capacity = strlen(token) + 1;
+    size_t length = 0;
+
+    char* result = malloc(capacity);
+
+    if (result == NULL) {
+        perror("malloc");
+        return NULL;
+    }
+
+    size_t i = 0;
+
+    while (token[i] != '\0') {
+
+        if (token[i] == '$' &&
+            (isalpha((unsigned char)token[i + 1]) ||
+             token[i + 1] == '_')) {
+
+            i++;
+
+            char name[256];
+            size_t name_length = 0;
+
+            while (isalnum((unsigned char)token[i]) ||
+                   token[i] == '_') {
+
+                if (name_length < sizeof(name) - 1) {
+                    name[name_length++] = token[i];
+                }
+
+                i++;
+            }
+
+            name[name_length] = '\0';
+
+            ShellVariable* variable = find_variable(name);
+
+            const char* value =
+                (variable != NULL) ? variable->value : "";
+
+            size_t value_length = strlen(value);
+
+            while (length + value_length + 1 > capacity) {
+
+                capacity *= 2;
+
+                char* temp = realloc(result, capacity);
+
+                if (temp == NULL) {
+                    perror("realloc");
+                    free(result);
+                    return NULL;
+                }
+
+                result = temp;
+            }
+
+            memcpy(result + length, value, value_length);
+            length += value_length;
+        }
+        else {
+
+            if (length + 2 > capacity) {
+
+                capacity *= 2;
+
+                char* temp = realloc(result, capacity);
+
+                if (temp == NULL) {
+                    perror("realloc");
+                    free(result);
+                    return NULL;
+                }
+
+                result = temp;
+            }
+
+            result[length++] = token[i++];
+        }
+    }
+
+    result[length] = '\0';
+
+    return result;
+}
+
+/* =========================================
+   BUILT-IN COMMANDS
+   ========================================= */
+
+/*
+   Returns:
+   0  = not a built-in
+   1  = built-in handled
+  -1  = exit command
+*/
+
 int handle_builtin(char** arglist) {
+
+    if (arglist == NULL || arglist[0] == NULL) {
+        return 0;
+    }
 
     if (strcmp(arglist[0], "exit") == 0) {
         return -1;
@@ -107,6 +330,7 @@ int handle_builtin(char** arglist) {
         printf("help    - Display available commands\n");
         printf("jobs    - Display background jobs\n");
         printf("history - Display command history\n");
+        printf("set     - Display shell variables\n");
 
         return 1;
     }
@@ -121,11 +345,18 @@ int handle_builtin(char** arglist) {
         return 1;
     }
 
+    if (strcmp(arglist[0], "set") == 0) {
+        print_shell_variables();
+        return 1;
+    }
+
     return 0;
 }
 
+/* =========================================
+   PROCESS EXIT STATUS
+   ========================================= */
 
-// Convert waitpid status into normal exit code
 static int get_exit_status(int status) {
 
     if (WIFEXITED(status)) {
@@ -139,10 +370,15 @@ static int get_exit_status(int status) {
     return 1;
 }
 
+/* =========================================
+   EXECUTE ONE COMMAND
+   ========================================= */
 
-// Execute one command with optional input/output redirection
-static int execute_single(char** args, int input_fd, int output_fd,
-                          int background, const char* command) {
+static int execute_single(char** args,
+                          int input_fd,
+                          int output_fd,
+                          int background,
+                          const char* command) {
 
     pid_t pid = fork();
 
@@ -194,15 +430,55 @@ static int execute_single(char** args, int input_fd, int output_fd,
     return get_exit_status(status);
 }
 
+/* =========================================
+   MAIN EXECUTION FUNCTION
+   ========================================= */
 
-// Main execution function
 int execute(char* arglist[], int background, const char* command) {
 
     if (arglist == NULL || arglist[0] == NULL) {
         return 0;
     }
 
-    // Handle built-in commands
+    /* Expand variables in command arguments */
+    for (int i = 0; arglist[i] != NULL; i++) {
+
+        char* expanded = expand_shell_variables(arglist[i]);
+
+        if (expanded == NULL) {
+            return 1;
+        }
+
+        free(arglist[i]);
+        arglist[i] = expanded;
+    }
+
+    /* Handle variable assignment in the parent shell */
+    if (is_variable_assignment(arglist[0]) &&
+        arglist[1] == NULL) {
+
+        char* equal = strchr(arglist[0], '=');
+
+        size_t name_length = (size_t)(equal - arglist[0]);
+
+        char* name = malloc(name_length + 1);
+
+        if (name == NULL) {
+            perror("malloc");
+            return 1;
+        }
+
+        memcpy(name, arglist[0], name_length);
+        name[name_length] = '\0';
+
+        int result = set_shell_variable(name, equal + 1);
+
+        free(name);
+
+        return result ? 0 : 1;
+    }
+
+    /* Handle built-in commands */
     if (strcmp(arglist[0], "|") != 0 &&
         strcmp(arglist[0], "<") != 0 &&
         strcmp(arglist[0], ">") != 0) {
@@ -218,7 +494,7 @@ int execute(char* arglist[], int background, const char* command) {
         }
     }
 
-
+    /* Prepare commands for pipes */
     char* commands[MAXARGS][MAXARGS];
 
     int command_count = 0;
@@ -227,8 +503,6 @@ int execute(char* arglist[], int background, const char* command) {
     char* input_file = NULL;
     char* output_file = NULL;
 
-
-    // Separate commands using pipe symbol
     for (int i = 0; arglist[i] != NULL; i++) {
 
         if (strcmp(arglist[i], "|") == 0) {
@@ -275,7 +549,6 @@ int execute(char* arglist[], int background, const char* command) {
         }
     }
 
-
     if (arg_count == 0) {
         fprintf(stderr, "Syntax error: missing command\n");
         return 1;
@@ -284,12 +557,10 @@ int execute(char* arglist[], int background, const char* command) {
     commands[command_count][arg_count] = NULL;
     command_count++;
 
-
     int input_fd = STDIN_FILENO;
     int output_fd = STDOUT_FILENO;
 
-
-    // Open input file
+    /* Open input file */
     if (input_file != NULL) {
 
         input_fd = open(input_file, O_RDONLY);
@@ -300,8 +571,7 @@ int execute(char* arglist[], int background, const char* command) {
         }
     }
 
-
-    // Open output file
+    /* Open output file */
     if (output_file != NULL) {
 
         output_fd = open(output_file,
@@ -320,11 +590,9 @@ int execute(char* arglist[], int background, const char* command) {
         }
     }
 
-
     int execution_status = 0;
 
-
-    // Execute a single command
+    /* Execute a single command */
     if (command_count == 1) {
 
         execution_status = execute_single(
@@ -336,9 +604,9 @@ int execute(char* arglist[], int background, const char* command) {
         );
     }
 
+    /* Execute a pipeline */
     else {
 
-        // Execute commands connected by pipes
         int previous_read = input_fd;
 
         pid_t pids[MAXARGS];
@@ -364,9 +632,8 @@ int execute(char* arglist[], int background, const char* command) {
                 }
             }
 
-            int next_output = (i < command_count - 1)
-                              ? pipe_fd[1] : output_fd;
-
+            int next_output =
+                (i < command_count - 1) ? pipe_fd[1] : output_fd;
 
             pid_t pid = fork();
 
@@ -388,7 +655,6 @@ int execute(char* arglist[], int background, const char* command) {
 
                 return 1;
             }
-
 
             if (pid == 0) {
 
@@ -419,11 +685,9 @@ int execute(char* arglist[], int background, const char* command) {
                 exit(1);
             }
 
-
             pids[i] = pid;
 
-
-            // Close previous input in parent
+            /* Close previous input in parent */
             if (previous_read != STDIN_FILENO) {
                 close(previous_read);
 
@@ -432,27 +696,23 @@ int execute(char* arglist[], int background, const char* command) {
                 }
             }
 
-
-            // Prepare next pipeline input
+            /* Prepare next pipeline input */
             if (i < command_count - 1) {
                 close(pipe_fd[1]);
                 previous_read = pipe_fd[0];
             }
         }
 
-
         if (previous_read != STDIN_FILENO) {
             close(previous_read);
         }
-
 
         if (output_fd != STDOUT_FILENO) {
             close(output_fd);
             output_fd = STDOUT_FILENO;
         }
 
-
-        // Background pipeline
+        /* Background pipeline */
         if (background) {
 
             for (int i = 0; i < command_count; i++) {
@@ -460,7 +720,7 @@ int execute(char* arglist[], int background, const char* command) {
             }
         }
 
-        // Foreground pipeline
+        /* Foreground pipeline */
         else {
 
             int last_status = 0;
@@ -473,7 +733,6 @@ int execute(char* arglist[], int background, const char* command) {
                     perror("waitpid");
                     last_status = 1;
                 }
-
                 else if (i == command_count - 1) {
                     last_status = get_exit_status(status);
                 }
@@ -483,8 +742,7 @@ int execute(char* arglist[], int background, const char* command) {
         }
     }
 
-
-    // Close remaining file descriptors
+    /* Close remaining file descriptors */
     if (input_fd != STDIN_FILENO) {
         close(input_fd);
     }

@@ -24,7 +24,11 @@ int execute(char** arglist, int background, const char* command);
 int handle_builtin(char** arglist);
 void display_history(void);
 char* get_history(int number);
-
+// Shell variable management
+int set_shell_variable(const char* name, const char* value);
+void print_shell_variables(void);
+int is_variable_assignment(const char* token);
+char* expand_shell_variables(const char* token);
 void setup_completion(void);
 
 // Background job management
